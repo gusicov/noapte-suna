@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { HX, HZ, SPEED, PLAYER_H, BAMBA, CHARS, SPAWNS, collide } from './shared.js';
+import { HX, HZ, SPEED, PLAYER_H, PR, CHARS, SPAWNS, collide, C, courseGround, pistonX, pistonVx, discAngle, ballPos } from './shared.js';
+import { buildCourse } from './course.js';
 import { SERVER, ROOM_FROM_URL } from './config.js';
 import { buildWorld } from './world.js';
 import { Actor, Bamba, COLORS, HANDLING, loadModels, portraits } from './actors.js';
@@ -24,20 +25,31 @@ function resize() {
 }
 addEventListener('resize', resize);
 resize();
-buildWorld(scene);
+const world = buildWorld(scene);
+const course = buildCourse(scene);
+let mode = 'banana', raceT = 0, timeLeft = 0;
+const SKY = new THREE.Color(0x8fd3ff), NIGHT = new THREE.Color(0x0b0d1a);
+function setMode(m) {
+  mode = m === 'race' ? 'race' : 'banana';
+  const race = mode === 'race';
+  world.root.visible = !race; course.root.visible = race;
+  scene.background = race ? SKY : NIGHT;
+  scene.fog.color.copy(scene.background); scene.fog.near = race ? 110 : 70; scene.fog.far = race ? 380 : 170;
+  if (!race) { world.sun.position.set(-26, 46, 22); world.sun.target.position.set(0, 0, 0); }
+}
 
 // -------------------------------------------------------------------- state --
 let ws = null, myId = null, lobby = null, phase = 'menu';
 const actors = new Map();
 let demo = [];
 let bamba = null;
-const me = { x: 0, z: 0, vx: 0, vz: 0, dashT: 0, dashCd: 0, dx: 0, dz: 1 };
+const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashT: 0, dashCd: 0, dx: 0, dz: 1, air: 0, jumpQ: 0, cp: 0, hitCd: 0, fin: 0 };
 const bombS = { holder: null, left: 0, total: 1, tickT: 0, punch: 0 };
 let countdown = 0, lastCount = 0, bigTimer = 0, shake = 0, sendT = 0, time = 0, camAngle = 0.6;
 const menuB = { mode: 'sit', t: 2, gx: 0, gz: 0 };
 const keys = new Set();
 const stick = { on: false, id: null, ox: 0, oy: 0, x: 0, z: 0 };
-const cam = { yaw: -Math.PI / 2, pitch: 0.32, dist: 8.5, lookId: null, lx: 0, ly: 0 };
+const cam = { yaw: -Math.PI / 2, pitch: 0.24, dist: 5.2, lookId: null, lx: 0, ly: 0 };
 function look(dx, dy, k = 1) {
   cam.yaw -= dx * 0.0026 * k;
   cam.pitch = Math.min(1.25, Math.max(-0.3, cam.pitch + dy * 0.0022 * k));
@@ -123,7 +135,7 @@ function renderScores() {
   if (!lobby) return;
   ui.scores.innerHTML = `<li class="room">CAMERA ${lobby.code}</li>` + lobby.players.map((p, i) => {
     const dead = phase !== 'lobby' && actors.get(p.id) && !actors.get(p.id).alive;
-    return `<li class="${dead ? 'dead' : ''}"><i class="dot" style="background:${COLORS[i % 4]}"></i>${p.name}${p.id === myId ? ' (tu)' : ''}<b>${p.score}</b></li>`;
+    return `<li class="${dead ? 'dead' : ''}"><i class="dot" style="background:${COLORS[i % 4]}"></i>${p.name}${p.id === myId ? ' (tu)' : ''}${mode === 'race' && actors.get(p.id)?.fin ? ' 🏁' + actors.get(p.id).fin : ''}<b>${p.score}</b></li>`;
   }).join('');
 }
 
@@ -187,7 +199,9 @@ async function connect(first) {
   const ok = await wake();
   if (!ok) { $('menu-msg').textContent = 'Nu pot ajunge la server.'; $('btn-create').disabled = $('btn-join').disabled = false; return; }
   ws = new WebSocket(SERVER.replace(/^http/, 'ws'));
-  ws.onopen = () => send({ ...first, name, char: myChar });
+  const sock = ws;
+  const giveUp = setTimeout(() => { if (sock.readyState !== 1) sock.close(); }, 15000);
+  ws.onopen = () => { clearTimeout(giveUp); send({ ...first, name, char: myChar }); };
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   ws.onclose = () => {
     const was = myId != null;
@@ -197,10 +211,15 @@ async function connect(first) {
     show(ui.lobby, false); show(ui.hud, false); show(ui.menu, true);
     ui.vignette.style.opacity = 0; ui.big.innerHTML = '';
     $('btn-create').disabled = $('btn-join').disabled = false;
-    if (was) $('menu-msg').textContent = 'S-a pierdut conexiunea cu serverul.';
+    setMode('banana');
+    if (was) $('menu-msg').textContent = 'S-a pierdut conexiunea cu serverul. Intră din nou cu același cod.';
+    else if ($('menu-msg').textContent === 'Se conectează…') $('menu-msg').textContent = 'Nu m-am putut conecta. Mai apasă o dată; dacă tot nu merge, oprește VPN/adblock sau încearcă alt browser.';
+    for (const a of demo) a.dispose();
     makeDemo();
   };
 }
+
+setInterval(() => { if (!document.hidden) fetch(SERVER + '/health', { cache: 'no-store' }).catch(() => {}); }, 240000); // keeps the free server awake while someone has the page open
 
 function syncActors() {
   const ids = new Set(lobby.players.map((p) => p.id));
@@ -217,6 +236,7 @@ function syncActors() {
   });
 }
 
+let justJoined = false;
 function onMessage(m) {
   switch (m.t) {
     case 'err':
@@ -227,31 +247,39 @@ function onMessage(m) {
       demo = [];
       history.replaceState(null, '', `${location.pathname}?room=${m.code}${location.search.includes('server=') ? '&server=' + encodeURIComponent(SERVER) : ''}`);
       show(ui.menu, false); $('menu-msg').textContent = '';
+      justJoined = true;
       break;
     case 'lobby': {
       const wasLobby = phase === 'lobby';
       lobby = m;
       syncActors();
       if (m.phase === 'lobby') {
-        phase = 'lobby'; bomb.visible = false; bombS.holder = null;
+        phase = 'lobby'; bomb.visible = false; bombS.holder = null; setMode('banana');
         if (!wasLobby) { clearScorch(); ui.big.innerHTML = ''; setBanner(''); ui.vignette.style.opacity = 0; }
         show(ui.lobby, true); show(ui.hud, false);
         renderLobby();
       } else {
         if (phase === 'lobby' || phase === 'menu') phase = m.phase;
         show(ui.lobby, false); show(ui.hud, true);
+        if (justJoined) feed('👀 Meciul e deja pornit. Te uiți acum și joci de la următorul.', 'info');
       }
+      justJoined = false;
       renderScores();
       break;
     }
     case 'round': {
       phase = 'countdown'; countdown = 3; lastCount = 4;
-      for (const a of actors.values()) { a.alive = false; a.dying = null; a.group.visible = false; }
+      setMode(m.mode); raceT = 0; clearScorch();
+      const race = mode === 'race';
+      for (const a of actors.values()) { a.alive = false; a.dying = null; a.group.visible = false; a.fin = 0; a.ty = 0; }
       for (const [id, x, z] of m.spawns) {
         const a = actors.get(id);
         if (!a) continue;
-        a.revive(); a.place(x, z, Math.PI / 2);
-        if (id === myId) { me.x = x; me.z = z; me.vx = me.vz = 0; me.dashCd = 0; cam.yaw = -Math.PI / 2; cam.pitch = 0.32; }
+        a.revive(); a.place(x, z, race ? Math.PI : Math.PI / 2);
+        if (id === myId) {
+          Object.assign(me, { x, z, y: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashCd: 0, cp: 0, fin: 0, air: 0 });
+          cam.yaw = race ? 0 : -Math.PI / 2; cam.pitch = 0.24;
+        }
       }
       bombS.holder = m.holder; bombS.tickT = 0;
       show(ui.lobby, false); show(ui.hud, true);
@@ -260,12 +288,16 @@ function onMessage(m) {
     }
     case 's': {
       if (phase !== 'lobby' && phase !== 'menu') phase = m.ph;
-      for (const [id, x, z, ry, mv, alive] of m.ps) {
+      if (m.md !== mode && phase !== 'lobby' && phase !== 'menu') setMode(m.md);
+      timeLeft = m.tl;
+      if (Math.abs(m.rt - raceT) > 0.5) raceT = m.rt; else raceT += (m.rt - raceT) * 0.1;
+      for (const [id, x, z, ry, mv, alive, y, fin] of m.ps) {
         const a = actors.get(id);
         if (!a) continue;
         if (a.alive && !alive) { a.kill('eat', bamba.mouth()); renderScores(); }
+        if (fin && a.fin !== fin) { a.fin = fin; renderScores(); }
         if (id === myId && a.alive && phase === 'play') continue; // I own my position
-        a.tx = x; a.tz = z; a.tyaw = ry; a.moving = mv;
+        a.tx = x; a.tz = z; a.ty = y || 0; a.tyaw = ry; a.moving = mv;
       }
       [bombS.holder, bombS.left, bombS.total] = m.bomb;
       [bamba.tx, bamba.tz, bamba.tyaw, bamba.st, bamba.target, bamba.t] = m.b;
@@ -309,10 +341,29 @@ function onEvent(m) {
       break;
     case 'escaped': feed('😮‍💨 Bamba și-a pierdut prada și s-a pus în fund', 'info'); break;
     case 'tired': feed('😴 Bamba a obosit și s-a pus în fund', 'info'); break;
+    case 'fin': {
+      const a = actors.get(m.id);
+      if (a) a.fin = m.place;
+      feed(`🏁 <b>${nameOf(m.id)}</b> a trecut linia pe locul ${m.place}`, 'info');
+      if (m.id === myId) { me.fin = m.place; big(`✅ CALIFICAT!<small>Locul ${m.place}</small>`, 2.5); sfx.win(); }
+      renderScores();
+      break;
+    }
+    case 'last': {
+      const a = actors.get(m.id);
+      setTimeout(() => { a?.kill('eat', bamba.mouth()); bamba.chomp = 1; sfx.chomp(); shake = Math.max(shake, 0.7); renderScores(); }, 350);
+      const v = `<b>${nameOf(m.id)}</b>`;
+      feed(pick([`🐌 ${v} a ajuns ultimul și l-a mâncat Bamba`, `🐌 ${v} a fost prea lent. Bamba a rezolvat.`, `🦦 Bamba l-a halit pe ${v}, ultimul din cursă`]), 'eat');
+      big(m.id === myId ? '🐌 ULTIMUL!<small>Te-a mâncat Bamba</small>' : `🐌 ${nameOf(m.id)}<small>a ajuns ultimul și a fost mâncat</small>`, 2.4);
+      break;
+    }
+    case 'next':
+      setTimeout(() => { if (phase === 'pause') big(m.mode === 'race' ? '🏁 CURSA<small>Urmează traseul cu obstacole. Ultimul la finish e mâncat de Bamba.</small>' : '🍌 BANANA<small>Urmează banana explozivă. Moare doar unul.</small>', 3); }, 1900);
+      break;
     case 'left': feed(`🚪 <b>${m.name}</b> a ieșit din joc`, 'info'); break;
     case 'win':
       sfx.win();
-      if (m.id != null) { big(`🏆 ${nameOf(m.id)}<small>${m.id === myId ? 'Ai câștigat! Ești ultimul în viață.' : 'a câștigat runda'}</small>`, 6); feed(`🏆 <b>${nameOf(m.id)}</b> a câștigat`, 'info'); }
+      if (m.id != null) { big(`🏆 ${nameOf(m.id)}<small>${m.id === myId ? 'Ai câștigat! Ești ultimul în viață.' : 'a câștigat meciul'}</small>`, 6); feed(`🏆 <b>${nameOf(m.id)}</b> a câștigat`, 'info'); }
       else big('💀<small>N-a supraviețuit nimeni</small>', 6);
       break;
   }
@@ -322,7 +373,8 @@ function onEvent(m) {
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') { if (e.key === 'Enter') (e.target.id === 'code' ? $('btn-join') : $('btn-create')).click(); return; }
   keys.add(e.code);
-  if (e.code === 'Space' || e.code === 'ShiftLeft') { e.preventDefault(); dash(); }
+  if (e.code === 'Space') { e.preventDefault(); if (mode === 'race') me.jumpQ = 0.16; else dash(); }
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { e.preventDefault(); dash(); }
   if (e.code.startsWith('Arrow')) e.preventDefault();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -336,7 +388,7 @@ function dash() {
 const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 if (touch) {
   show($('btn-dash'), true);
-  $('btn-dash').addEventListener('pointerdown', (e) => { e.preventDefault(); dash(); });
+  $('btn-dash').addEventListener('pointerdown', (e) => { e.preventDefault(); if (mode === 'race') me.jumpQ = 0.16; else dash(); });
   const cv = $('game');
   cv.addEventListener('pointerdown', (e) => {
     if (phase === 'menu' || phase === 'lobby') return;
@@ -417,15 +469,59 @@ function moveMe(dt, a) {
   let vx = me.vx, vz = me.vz;
   me.dashCd = Math.max(0, me.dashCd - dt);
   if (me.dashT > 0) { me.dashT -= dt; vx = me.dx * SPEED * 2.7; vz = me.dz * SPEED * 2.7; me.vx = me.dx * SPEED; me.vz = me.dz * SPEED; }
-  me.x += vx * dt; me.z += vz * dt;
-  collide(me);
-  a.group.position.x = me.x; a.group.position.z = me.z;
+  if (mode === 'race') raceStep(dt, a, vx, vz);
+  else { me.x += vx * dt; me.z += vz * dt; me.y = 0; collide(me); }
+  a.group.position.set(me.x, me.y, me.z);
   const v = Math.hypot(vx, vz);
   a.moving = v > 1.2 ? 1 : 0;
   if (v > 1.2) a.tyaw = Math.atan2(vx, vz);
   ui.dash.style.transform = `scaleX(${1 - me.dashCd / 2.5})`;
   sendT -= dt;
-  if (sendT <= 0) { sendT = 0.05; send({ t: 'p', x: +me.x.toFixed(2), z: +me.z.toFixed(2), ry: +a.tyaw.toFixed(2), m: a.moving }); }
+  if (sendT <= 0) { sendT = 0.05; send({ t: 'p', x: +me.x.toFixed(2), y: +me.y.toFixed(2), z: +me.z.toFixed(2), ry: +a.tyaw.toFixed(2), m: a.moving }); }
+}
+
+function bonk(kx, kz, up) {
+  me.kx = kx; me.kz = kz; me.vy = up; me.air = 1; me.hitCd = 0.45;
+  shake = Math.max(shake, 0.6); sfx.bonk(); navigator.vibrate?.(60);
+}
+function raceStep(dt, a, vx, vz) {
+  me.jumpQ = Math.max(0, me.jumpQ - dt); me.hitCd = Math.max(0, me.hitCd - dt); me.air += dt;
+  if (me.jumpQ > 0 && me.air < 0.13) { me.vy = 12.5; me.air = 1; me.jumpQ = 0; sfx.jump(); }
+  me.vy = Math.max(-40, me.vy - 32 * dt);
+  const py = me.y;
+  me.x += (vx + me.kx) * dt; me.z += (vz + me.kz) * dt; me.y += me.vy * dt;
+  const kd = Math.exp(-3.2 * dt); me.kx *= kd; me.kz *= kd;
+  const g = courseGround(me.x, me.z, raceT, py);
+  if (g && me.vy <= 0 && me.y <= g.y) {
+    me.y = g.y; me.vy = 0; me.air = 0; me.x += g.vx * dt;
+    for (const p of C.pads) if (p.cp > me.cp && Math.abs(me.x - p.x) <= p.w / 2 && Math.abs(me.z - p.z) <= p.d / 2) { me.cp = p.cp; if (p.cp < 4) { sfx.count(); feed('🚩 Checkpoint!', 'info'); } }
+  }
+  if (me.hitCd <= 0) {
+    // the sweeper bar
+    const th = discAngle(raceT), rx = me.x - C.disc.x, rz = me.z - C.disc.z, cs = Math.cos(th), sn = Math.sin(th);
+    const along = rx * cs + rz * sn, perp = -rx * sn + rz * cs;
+    if (me.y < 1.25 && Math.abs(along) < C.disc.bar && Math.abs(perp) < 0.42 + PR) {
+      const sp = (9 + Math.abs(along) * C.disc.speed) * Math.sign(along || 1);
+      bonk(-sn * sp, cs * sp, 9);
+    }
+    // the pistons
+    for (let i = 0; i < C.pistons.length; i++) {
+      const px = pistonX(i, raceT);
+      if (me.y < C.pistonH && Math.abs(me.x - px) < C.pistonW / 2 + PR && Math.abs(me.z - C.pistons[i].z) < C.pistonD / 2 + PR) {
+        bonk(Math.sign(pistonVx(i, raceT) || me.x - px) * 19, 0, 7);
+      }
+    }
+    // the rolling balls
+    for (let k = 0; k < 4; k++) {
+      const b = ballPos(k, raceT);
+      if (b && Math.hypot(me.x - b.x, me.y + 0.9 - b.y, me.z - b.z) < C.ball.r + 0.75) bonk(Math.sign(me.x - b.x || 1) * 6, 20, 9);
+    }
+  }
+  if (me.y < C.killY) { // fell off: back to the last checkpoint
+    const p = C.pads.find((q) => q.cp === me.cp) || C.pads[0];
+    Object.assign(me, { x: p.x + (Math.random() - 0.5) * 4, z: p.z + (me.cp ? 1 : 0), y: p.y + 4, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0 });
+    feed(pick(['🫠 Ai căzut în gumă. Înapoi la checkpoint.', '🫠 Pleosc. Mai încearcă o dată.']), 'info');
+  }
 }
 
 function menuBamba(dt) {
@@ -457,6 +553,8 @@ function frame(now) {
   const inGame = phase === 'countdown' || phase === 'play' || phase === 'pause' || phase === 'end';
 
   if (!inGame) menuBamba(dt);
+  if (mode === 'race') { if (phase === 'play') raceT += dt; course.update(raceT); }
+  bamba.baseY = mode === 'race' ? C.finishY : 0;
   bamba.update(dt, time);
 
   const mine = myActor();
@@ -468,6 +566,7 @@ function frame(now) {
     if (a.alive && !(id === myId && phase === 'play')) {
       a.group.position.x += (a.tx - a.group.position.x) * k;
       a.group.position.z += (a.tz - a.group.position.z) * k;
+      a.group.position.y += ((a.ty || 0) - a.group.position.y) * k;
     }
     a.update(dt, time, inGame && bombS.holder === id);
     a.label.visible = camera.position.distanceToSquared(a.group.position) > 49;
@@ -513,28 +612,35 @@ function frame(now) {
 
   // banner + vignette
   if (inGame && lobby) {
-    const hunted = bamba.st === 'chase' && bamba.target === myId && iAmAlive() && phase === 'play';
+    const hunted = mode !== 'race' && bamba.st === 'chase' && bamba.target === myId && iAmAlive() && phase === 'play';
     if (phase === 'end' || phase === 'pause') setBanner('');
+    else if (mode === 'race') {
+      if (!iAmAlive()) setBanner('👻 Ești pe margine. Te uiți la cursă.');
+      else if (me.fin) setBanner('✅ Calificat! Îi aștepți pe ceilalți…');
+      else setBanner(`🏁 Fugi la finish! Ultimul e mâncat · ⏱ ${timeLeft}s`, timeLeft <= 10 ? 'hot' : '');
+    }
     else if (hunted) setBanner('🦦 BAMBA VINE DUPĂ TINE! FUGI!', 'bamba');
     else if (bombS.holder === myId) setBanner('🍌 AI BANANA! Atinge pe cineva!', 'hot');
     else if (!iAmAlive()) setBanner('👻 Ești pe margine. Runda viitoare joci iar.');
     else if (bombS.holder != null) setBanner(`Fugi de ${nameOf(bombS.holder)}! Are banana 🍌`);
     ui.vignette.className = hunted ? '' : 'hot';
-    ui.vignette.style.opacity = hunted ? 0.55 + Math.sin(time * 12) * 0.25 : (bombS.holder === myId && phase === 'play' ? 0.2 : 0);
+    ui.vignette.style.opacity = hunted ? 0.55 + Math.sin(time * 12) * 0.25 : (mode !== 'race' && bombS.holder === myId && phase === 'play' ? 0.2 : 0);
   }
 
   // camera
   if (inGame) {
-    let fx = 0, fz = 0;
-    const follow = mine?.alive ? mine : (holder?.alive ? holder : null);
-    if (follow) { fx = follow.group.position.x; fz = follow.group.position.z; }
+    let fx = 0, fz = 0, fy = 0;
+    const follow = mine?.alive ? mine : (holder?.alive ? holder : [...actors.values()].find((q) => q.alive && !q.fin) || [...actors.values()].find((q) => q.alive));
+    if (follow) { fx = follow.group.position.x; fz = follow.group.position.z; fy = Math.max(-6, follow.group.position.y); }
     else if (phase === 'play') { fx = bamba.x; fz = bamba.z; }
     const spect = !mine?.alive;
     if (spect && phase === 'play' && !rmb && cam.lookId == null) cam.yaw += dt * 0.15;
-    tmp.set(fx, PLAYER_H * 0.86, fz);
+    tmp.set(fx, fy + PLAYER_H * 0.86, fz);
+    if (mode === 'race') { world.sun.position.set(fx - 26, fy + 46, fz + 22); world.sun.target.position.set(fx, fy, fz); }
     camLook.lerp(tmp, 1 - Math.exp(-(spect ? 4 : 18) * dt));
+    if (!spect) { camLook.x = tmp.x; camLook.z = tmp.z; }
     const D = cam.dist * (spect ? 1.8 : 1) * (camera.aspect < 1 ? 1.25 : 1), cp = Math.cos(cam.pitch);
-    camPos.set(camLook.x + Math.sin(cam.yaw) * cp * D, Math.max(0.25, camLook.y + Math.sin(cam.pitch) * D), camLook.z + Math.cos(cam.yaw) * cp * D);
+    camPos.set(camLook.x + Math.sin(cam.yaw) * cp * D, Math.max(mode === 'race' ? -30 : 0.25, camLook.y + Math.sin(cam.pitch) * D), camLook.z + Math.cos(cam.yaw) * cp * D);
     show($('hint'), !touch && !usedLook);
   } else {
     camAngle += dt * 0.09;
@@ -566,4 +672,4 @@ loadModels((p) => (ui.loading.textContent = `Se încarcă… ${Math.round(p * 10
 }).catch((e) => { ui.loading.textContent = 'Nu s-au putut încărca modelele: ' + e.message; });
 
 // handy for debugging from the console
-window.__ns = { cam, get phase() { return phase; }, actors, me, get bamba() { return bamba; }, bombS, keys };
+window.__ns = { cam, get mode() { return mode; }, get raceT() { return raceT; }, get phase() { return phase; }, actors, me, get bamba() { return bamba; }, bombS, keys };

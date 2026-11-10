@@ -61,4 +61,6 @@ export const sfx = {
   go: () => { tone(780, 0.3, 'triangle', 0.25); tone(1040, 0.35, 'triangle', 0.2, null, 0.08); },
   win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.28, 'triangle', 0.22, null, i * 0.13)),
   dash: () => burst(0.18, 0.18, 3000),
+  jump: () => tone(380, 0.14, 'sine', 0.14, 760),
+  bonk: () => { tone(220, 0.16, 'square', 0.22, 90); burst(0.1, 0.3, 1400); },
 };

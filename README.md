@@ -3,7 +3,7 @@
 Hot potato în 3D pentru până la 4 prieteni, direct în browser. Pasezi o banană care ticăie; cine o ține când explodează, pierde. Pe margine stă **Bamba**, un dihor uriaș: dacă te apropii, te aleargă și te mănâncă.
 
 - **Joacă:** https://gusicov.github.io/noapte-suna/
-- Mișcare `WASD`, cameră cu click dreapta ținut + mouse, sprint `Space`, zoom cu rotița.
+- Mișcare `WASD`, cameră cu click dreapta ținut + mouse, sprint `Shift`, săritură `Space` (în cursă), zoom cu rotița.
 - Pe telefon: joystick în stânga, cameră în dreapta.
 
 ## Cum e construit
@@ -28,4 +28,8 @@ Apoi deschide http://localhost:3000.
 
 - Banana trece la cel pe care îl atingi, dar trebuie ținută minim 0,2 s (și nu se întoarce imediat la cel care ți-a dat-o).
 - Bamba: aleargă 2 s la viteza jucătorilor, apoi cu 50% mai încet, iar după 10 s se pune în fund. Scapi dacă te îndepărtezi jumătate de hartă. Stă minim 5 s până pornește după următorul.
-- Ultimul rămas în viață câștigă.
+- Nivelul 1 (banana): moare doar unul, de la banană sau de la Bamba.
+- Nivelul 2 (cursa): traseu cu obstacole; ultimul la finish e mâncat de Bamba, restul se califică.
+- Nivelurile alternează până rămâne un singur jucător, care câștigă meciul.
+
+După ce modifici ceva în `docs/js`, rulează `npm run build` (generează `docs/game.js`).

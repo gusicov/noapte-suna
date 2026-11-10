@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { HX, HZ, SPEED, BAMBA, CHARS, SPAWNS, collide } from './docs/js/shared.js';
+import { HX, HZ, SPEED, BAMBA, CHARS, SPAWNS, collide, C, courseY } from './docs/js/shared.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'docs');
 const PORT = process.env.PORT || 3000;
@@ -61,6 +61,7 @@ class Room {
     this.bomb = { holder: null, left: 0, total: 0, got: 0, from: null };
     this.bamba = { x: BAMBA.home.x, z: BAMBA.home.z, ry: -Math.PI / 2, st: 'lurk', t: 0, target: null };
     this.time = 0;
+    this.mode = 'banana'; this.level = 0; this.rt = 0; this.finished = []; this.raceEnd = 0;
     this.interval = setInterval(() => this.tick(), TICK * 1000);
   }
 
@@ -76,7 +77,7 @@ class Room {
   sendLobby() { this.broadcast(this.lobbyMsg()); }
 
   addPlayer(ws, name, char, bot = false) {
-    const p = { id: nextId++, ws, name, char, bot, score: 0, alive: false, x: 0, z: 0, ry: 0, m: 0, ai: { tx: 0, tz: 0, t: 0 } };
+    const p = { id: nextId++, ws, name, char, bot, score: 0, alive: false, x: 0, y: 0, z: 0, ry: 0, m: 0, fin: 0, ai: { tx: 0, tz: 0, t: 0 } };
     this.players.set(p.id, p);
     if (!bot && this.hostId == null) this.hostId = p.id;
     return p;
@@ -89,9 +90,9 @@ class Room {
     if (this.hostId === id) this.hostId = this.humans()[0]?.id ?? null;
     if (!this.humans().length) return this.destroy();
     this.broadcast({ t: 'ev', e: 'left', name: p.name });
-    if (p.alive && (this.phase === 'play' || this.phase === 'countdown')) {
+    if (p.alive && this.phase !== 'lobby' && this.phase !== 'end') {
       p.alive = false;
-      this.afterDeath(p);
+      this.afterDeath(p, true);
     }
     this.sendLobby();
   }
@@ -101,20 +102,22 @@ class Room {
   startMatch() {
     if (this.phase !== 'lobby' || this.players.size < 2) return;
     for (const p of this.players.values()) p.alive = true;
+    this.level = process.env.START_RACE ? 1 : 0; this.mode = this.level ? 'race' : 'banana';
     this.startRound();
   }
 
   startRound() {
+    if (this.mode === 'race') return this.startRace();
     const alive = this.alive();
     const spots = [...SPAWNS].sort(() => Math.random() - 0.5);
-    alive.forEach((p, i) => { p.x = spots[i % 4].x; p.z = spots[i % 4].z; p.ry = Math.PI / 2; p.m = 0; });
+    alive.forEach((p, i) => { p.x = spots[i % 4].x; p.z = spots[i % 4].z; p.y = 0; p.fin = 0; p.ry = Math.PI / 2; p.m = 0; });
     const holder = alive[Math.floor(Math.random() * alive.length)];
     const total = rnd(14, 24);
     this.bomb = { holder: holder.id, left: total, total, got: -9, from: null };
     this.bamba = { x: BAMBA.home.x, z: BAMBA.home.z, ry: -Math.PI / 2, st: 'lurk', t: 0, target: null };
     this.phase = 'countdown';
     this.timer = 3;
-    this.broadcast({ t: 'round', holder: holder.id, spawns: alive.map((p) => [p.id, p.x, p.z]) });
+    this.broadcast({ t: 'round', mode: 'banana', holder: holder.id, spawns: alive.map((p) => [p.id, p.x, p.z]) });
     this.sendLobby();
   }
 
@@ -125,7 +128,69 @@ class Room {
     this.broadcast({ t: 'ev', e: 'pass', to: to.id, from: from ? from.id : null });
   }
 
-  afterDeath(dead) {
+  // level 2: everyone races; only the last one is out
+  startRace() {
+    const alive = this.alive();
+    alive.forEach((p, i) => {
+      p.x = -(alive.length - 1) * 1.6 + i * 3.2; p.z = C.startZ; p.y = 0; p.ry = Math.PI; p.m = 0; p.fin = 0;
+      p.ai = { sp: rnd(6.2, 7.5), stop: 0, next: rnd(8, 20), tx: 0, tz: 0, t: 0 };
+    });
+    this.finished = []; this.rt = 0; this.raceEnd = 120;
+    this.bomb.holder = null;
+    this.bamba = { x: 3, z: C.finishZ - 19, ry: 0.2, st: 'sit', t: 0, target: null };
+    this.phase = 'countdown';
+    this.timer = 3;
+    this.broadcast({ t: 'round', mode: 'race', holder: null, spawns: alive.map((p) => [p.id, p.x, p.z]) });
+    this.sendLobby();
+  }
+
+  updateRace() {
+    this.rt += TICK;
+    for (const p of this.alive()) {
+      if (p.bot && !p.fin) {
+        const ai = p.ai;
+        if (ai.stop > 0) { ai.stop -= TICK; p.m = 0; }
+        else {
+          p.z -= ai.sp * TICK; ai.next -= ai.sp * TICK;
+          if (ai.next <= 0) { ai.stop = rnd(0.4, 1.4); ai.next = rnd(9, 22); }
+          p.x += (Math.sin(this.rt * 0.7 + p.id) * 1.6 - p.x) * 0.04;
+          p.y = courseY(p.z); p.ry = Math.PI; p.m = 1;
+        }
+      }
+      if (!p.fin && p.z <= C.finishZ && p.y >= C.finishY - 0.8) {
+        p.fin = this.finished.push(p.id);
+        if (p.bot) p.m = 0;
+        this.broadcast({ t: 'ev', e: 'fin', id: p.id, place: p.fin });
+        if (p.fin === 1) this.raceEnd = Math.min(this.raceEnd, this.rt + 45);
+      }
+    }
+    this.checkRace();
+  }
+
+  checkRace() {
+    if (this.mode !== 'race' || this.phase !== 'play') return;
+    const alive = this.alive();
+    const rem = alive.filter((p) => !p.fin);
+    if (rem.length > 1 && this.rt < this.raceEnd) return;
+    const loser = rem.length ? rem.sort((a, b) => b.z - a.z)[0] : alive.sort((a, b) => b.fin - a.fin)[0];
+    if (!loser) return;
+    loser.alive = false;
+    this.bamba.x = loser.x; this.bamba.z = loser.z - 2.5; this.bamba.ry = 0;
+    this.broadcast({ t: 'ev', e: 'last', id: loser.id });
+    this.afterDeath(loser);
+  }
+
+  nextLevel() {
+    this.level++;
+    this.mode = this.level % 2 ? 'race' : 'banana';
+    this.bomb.holder = null;
+    this.phase = 'pause';
+    this.timer = 4;
+    this.broadcast({ t: 'ev', e: 'next', mode: this.mode });
+  }
+
+  // `left` = the player disconnected (doesn't count as the level's elimination)
+  afterDeath(dead, left = false) {
     const alive = this.alive();
     if (alive.length <= 1) {
       const w = alive[0];
@@ -137,10 +202,9 @@ class Room {
       this.sendLobby();
       return true;
     }
-    if (this.bomb.holder === dead.id) {
-      const next = alive[Math.floor(Math.random() * alive.length)];
-      this.giveBomb(next, null);
-    }
+    if (!left) { this.nextLevel(); return true; }
+    if (this.mode === 'race') this.checkRace();
+    else if (this.bomb.holder === dead.id && this.phase !== 'pause') this.giveBomb(alive[Math.floor(Math.random() * alive.length)], null);
     return false;
   }
 
@@ -157,13 +221,16 @@ class Room {
       this.timer -= TICK;
       if (this.timer <= 0) { this.phase = 'lobby'; for (const p of this.players.values()) p.alive = false; this.sendLobby(); }
     } else if (this.phase === 'play') {
-      this.updateBots();
-      this.updateBomb();
-      if (this.phase === 'play') this.updateBamba();
+      if (this.mode === 'race') this.updateRace();
+      else {
+        this.updateBots();
+        this.updateBomb();
+        if (this.phase === 'play') this.updateBamba();
+      }
     }
     const b = this.bamba;
-    this.broadcast({ t: 's', ph: this.phase,
-      ps: [...this.players.values()].map((p) => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.m, p.alive ? 1 : 0]),
+    this.broadcast({ t: 's', ph: this.phase, md: this.mode, rt: +this.rt.toFixed(2), tl: Math.max(0, Math.round(this.raceEnd - this.rt)),
+      ps: [...this.players.values()].map((p) => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.m, p.alive ? 1 : 0, +p.y.toFixed(2), p.fin]),
       bomb: [this.bomb.holder, +this.bomb.left.toFixed(2), +this.bomb.total.toFixed(2)],
       b: [+b.x.toFixed(2), +b.z.toFixed(2), +b.ry.toFixed(2), b.st, b.target, +b.t.toFixed(2)] });
   }
@@ -189,7 +256,7 @@ class Room {
       victim.alive = false;
       this.broadcast({ t: 'ev', e: 'boom', id: victim.id, by: bm.from, x: victim.x, z: victim.z });
       bm.holder = null;
-      if (!this.afterDeath(victim)) { this.phase = 'pause'; this.timer = 3; }
+      this.afterDeath(victim);
     }
   }
 
@@ -224,10 +291,10 @@ class Room {
     for (const p of alive) {
       if (dist(p, b) < BAMBA.eat) {
         p.alive = false;
-        const wasTarget = p.id === b.target;
         this.broadcast({ t: 'ev', e: 'eat', id: p.id });
-        if (this.afterDeath(p)) return;
-        if (wasTarget) return sit();
+        b.st = 'sit'; b.t = 0; b.target = null;
+        this.afterDeath(p);
+        return;
       }
     }
   }
@@ -300,7 +367,11 @@ wss.on('connection', (ws) => {
     switch (m.t) {
       case 'p':
         if (me.alive && room.phase === 'play' && Number.isFinite(m.x) && Number.isFinite(m.z)) {
-          me.x = Math.max(-HX, Math.min(HX, m.x)); me.z = Math.max(-HZ, Math.min(HZ, m.z));
+          if (room.mode === 'race') {
+            if (me.fin) break;
+            me.x = Math.max(-40, Math.min(40, m.x)); me.z = Math.max(-190, Math.min(12, m.z));
+            me.y = Number.isFinite(m.y) ? Math.max(-40, Math.min(40, m.y)) : 0;
+          } else { me.x = Math.max(-HX, Math.min(HX, m.x)); me.z = Math.max(-HZ, Math.min(HZ, m.z)); me.y = 0; }
           me.ry = Number.isFinite(m.ry) ? m.ry : 0; me.m = m.m ? (m.m === 2 ? 2 : 1) : 0;
         }
         break;

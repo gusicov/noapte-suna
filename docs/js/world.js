@@ -83,6 +83,8 @@ class HoseCurve extends THREE.Curve {
 }
 
 export function buildWorld(scene) {
+  const root = new THREE.Group();
+  scene.add(root);
   scene.background = new THREE.Color(0x0b0d1a);
   scene.fog = new THREE.Fog(0x0b0d1a, 70, 170);
 
@@ -94,7 +96,7 @@ export function buildWorld(scene) {
   Object.assign(sun.shadow.camera, { left: -46, right: 46, top: 36, bottom: -36, near: 5, far: 120 });
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.05;
-  scene.add(sun);
+  scene.add(sun, sun.target);
   const moon = new THREE.DirectionalLight(0x5f7bff, 0.7);
   moon.position.set(30, 20, -30);
   scene.add(moon);
@@ -103,7 +105,7 @@ export function buildWorld(scene) {
     new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.62, metalness: 0.05 }));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
-  scene.add(floor);
+  root.add(floor);
 
   // hazard tape around the arena
   const tapeMat = (len) => new THREE.MeshBasicMaterial({ map: tapeTexture(len / 2.2) });
@@ -112,7 +114,7 @@ export function buildWorld(scene) {
     m.rotation.x = -Math.PI / 2;
     if (x !== 0) m.rotation.z = Math.PI / 2;
     m.position.set(x, 0.03, z);
-    scene.add(m);
+    root.add(m);
   }
 
   // the giant knotted hose
@@ -124,7 +126,7 @@ export function buildWorld(scene) {
     m.renderOrder = order;
     return m;
   };
-  scene.add(mk(THREE.BackSide, 5), mk(THREE.FrontSide, 6));
+  root.add(mk(THREE.BackSide, 5), mk(THREE.FrontSide, 6));
   // soft fake shadow under the hose
   const blob = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false });
   const bg = new THREE.CircleGeometry(HOSE_R * 1.05, 14);
@@ -133,7 +135,7 @@ export function buildWorld(scene) {
     const s = new THREE.Mesh(bg, blob);
     s.rotation.x = -Math.PI / 2;
     s.position.set(p.x + (p.y - HOSE_R) * 0.5, 0.02, p.z - (p.y - HOSE_R) * 0.4);
-    scene.add(s);
+    root.add(s);
   }
 
   // out-of-arena props, for scale: a mic-stand tripod and Bamba's blanket
@@ -153,14 +155,14 @@ export function buildWorld(scene) {
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 90, 12), black);
   pole.position.y = 50;
   hub.add(pole);
-  scene.add(hub);
+  root.add(hub);
 
   const blanket = new THREE.Mesh(new THREE.SphereGeometry(13, 24, 12),
     new THREE.MeshStandardMaterial({ color: 0x4a3f6b, roughness: 1 }));
   blanket.scale.set(1, 0.05, 1.15);
   blanket.position.set(HX + 9, 0, 0);
   blanket.receiveShadow = true;
-  scene.add(blanket);
+  root.add(blanket);
 
-  return { sun };
+  return { sun, root };
 }

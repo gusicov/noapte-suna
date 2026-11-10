@@ -198,7 +198,7 @@ export class Bamba {
     this.ph += dt * (4 + this.spd * 9);
 
     const run = this.spd, bound = Math.sin(this.ph);
-    this.group.position.set(this.x, Math.abs(bound) * 1.3 * run, this.z);
+    this.group.position.set(this.x, (this.baseY || 0) + Math.abs(bound) * 1.3 * run, this.z);
     this.group.rotation.y = this.yaw;
     // ferret bounding: body rocks, stretches; sitting: rears up on his butt and looks around
     this.pivot.rotation.x = bound * 0.13 * run - this.sit * 0.72 + Math.sin(this.chomp * Math.PI) * 0.45;
@@ -208,7 +208,7 @@ export class Bamba {
     this.pivot.scale.set(br, br * (1 - Math.cos(this.ph * 2) * 0.05 * run), 1 + Math.cos(this.ph * 2) * 0.06 * run);
   }
 
-  mouth(out = new THREE.Vector3()) { return out.set(this.x, 2, this.z); }
+  mouth(out = new THREE.Vector3()) { return out.set(this.x, (this.baseY || 0) + 2, this.z); }
 }
 
 // tiny portrait renders for the character cards
