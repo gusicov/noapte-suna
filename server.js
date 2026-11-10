@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { HX, HZ, SPEED, BAMBA, CHARS, SPAWNS, collide, C, courseY } from './docs/js/shared.js';
+import { HX, HZ, SPEED, BAMBA, CHARS, SPAWNS, collide, C, courseY, PUPS } from './docs/js/shared.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'docs');
 const PORT = process.env.PORT || 3000;
@@ -61,8 +61,15 @@ class Room {
     this.bomb = { holder: null, left: 0, total: 0, got: 0, from: null };
     this.bamba = { x: BAMBA.home.x, z: BAMBA.home.z, ry: -Math.PI / 2, st: 'lurk', t: 0, target: null };
     this.time = 0;
+    this.pups = []; this.pupT = 4; this.pupId = 1;
     this.mode = 'banana'; this.level = 0; this.rt = 0; this.finished = []; this.raceEnd = 0;
-    this.interval = setInterval(() => this.tick(), TICK * 1000);
+    // fixed 20 Hz steps driven by the real clock (timers alone drift on some hosts)
+    this.last = Date.now(); this.acc = 0;
+    this.interval = setInterval(() => {
+      const now = Date.now();
+      this.acc += Math.min(250, now - this.last); this.last = now;
+      while (this.acc >= TICK * 1000) { this.acc -= TICK * 1000; this.tick(); }
+    }, 20);
   }
 
   send(p, msg) { if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(msg)); }
@@ -77,7 +84,7 @@ class Room {
   sendLobby() { this.broadcast(this.lobbyMsg()); }
 
   addPlayer(ws, name, char, bot = false) {
-    const p = { id: nextId++, ws, name, char, bot, score: 0, alive: false, x: 0, y: 0, z: 0, ry: 0, m: 0, fin: 0, ai: { tx: 0, tz: 0, t: 0 } };
+    const p = { id: nextId++, ws, name, char, bot, score: 0, alive: false, x: 0, y: 0, z: 0, ry: 0, m: 0, fin: 0, shield: 0, fast: 0, frozen: 0, lock: 0, ai: { tx: 0, tz: 0, t: 0 } };
     this.players.set(p.id, p);
     if (!bot && this.hostId == null) this.hostId = p.id;
     return p;
@@ -102,7 +109,7 @@ class Room {
   startMatch() {
     if (this.phase !== 'lobby' || this.players.size < 2) return;
     for (const p of this.players.values()) p.alive = true;
-    this.level = process.env.START_RACE ? 1 : 0; this.mode = this.level ? 'race' : 'banana';
+    this.level = process.env.START_RACE ? 1 : 0; this.mode = this.level ? 'race' : 'banana'; this.nextMode = null;
     this.startRound();
   }
 
@@ -110,7 +117,8 @@ class Room {
     if (this.mode === 'race') return this.startRace();
     const alive = this.alive();
     const spots = [...SPAWNS].sort(() => Math.random() - 0.5);
-    alive.forEach((p, i) => { p.x = spots[i % 4].x; p.z = spots[i % 4].z; p.y = 0; p.fin = 0; p.ry = Math.PI / 2; p.m = 0; });
+    alive.forEach((p, i) => { p.x = spots[i % 4].x; p.z = spots[i % 4].z; p.y = 0; p.fin = 0; p.ry = Math.PI / 2; p.m = 0; p.shield = p.fast = p.frozen = p.lock = 0; });
+    this.pups = []; this.pupT = 3;
     const holder = alive[Math.floor(Math.random() * alive.length)];
     const total = rnd(14, 24);
     this.bomb = { holder: holder.id, left: total, total, got: -9, from: null };
@@ -133,9 +141,9 @@ class Room {
     const alive = this.alive();
     alive.forEach((p, i) => {
       p.x = -(alive.length - 1) * 1.6 + i * 3.2; p.z = C.startZ; p.y = 0; p.ry = Math.PI; p.m = 0; p.fin = 0;
-      p.ai = { sp: rnd(6.2, 7.5), stop: 0, next: rnd(8, 20), tx: 0, tz: 0, t: 0 };
+      p.ai = { sp: rnd(5.7, 6.9), stop: 0, next: rnd(8, 20), tx: 0, tz: 0, t: 0 };
     });
-    this.finished = []; this.rt = 0; this.raceEnd = 120;
+    this.finished = []; this.rt = 0; this.raceEnd = 120; this.pups = [];
     this.bomb.holder = null;
     this.bamba = { x: 3, z: C.finishZ - 19, ry: 0.2, st: 'sit', t: 0, target: null };
     this.phase = 'countdown';
@@ -182,11 +190,11 @@ class Room {
 
   nextLevel() {
     this.level++;
-    this.mode = this.level % 2 ? 'race' : 'banana';
+    this.nextMode = this.level % 2 ? 'race' : 'banana'; // the scene only switches when the next round starts
     this.bomb.holder = null;
     this.phase = 'pause';
     this.timer = 4;
-    this.broadcast({ t: 'ev', e: 'next', mode: this.mode });
+    this.broadcast({ t: 'ev', e: 'next', mode: this.nextMode });
   }
 
   // `left` = the player disconnected (doesn't count as the level's elimination)
@@ -216,7 +224,7 @@ class Room {
       if (this.timer <= 0) { this.phase = 'play'; this.bomb.got = this.time; this.broadcast({ t: 'ev', e: 'go' }); }
     } else if (this.phase === 'pause') {
       this.timer -= TICK;
-      if (this.timer <= 0) this.startRound();
+      if (this.timer <= 0) { if (this.nextMode) { this.mode = this.nextMode; this.nextMode = null; } this.startRound(); }
     } else if (this.phase === 'end') {
       this.timer -= TICK;
       if (this.timer <= 0) { this.phase = 'lobby'; for (const p of this.players.values()) p.alive = false; this.sendLobby(); }
@@ -224,15 +232,53 @@ class Room {
       if (this.mode === 'race') this.updateRace();
       else {
         this.updateBots();
+        this.updatePups();
         this.updateBomb();
         if (this.phase === 'play') this.updateBamba();
       }
     }
     const b = this.bamba;
     this.broadcast({ t: 's', ph: this.phase, md: this.mode, rt: +this.rt.toFixed(2), tl: Math.max(0, Math.round(this.raceEnd - this.rt)),
-      ps: [...this.players.values()].map((p) => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.m, p.alive ? 1 : 0, +p.y.toFixed(2), p.fin]),
+      ps: [...this.players.values()].map((p) => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.m, p.alive ? 1 : 0, +p.y.toFixed(2), p.fin, (p.shield > this.time ? 1 : 0) | (p.frozen > this.time ? 2 : 0) | (p.fast > this.time ? 4 : 0)]),
+      pu: this.pups.map((o) => [o.id, o.x, o.z, o.type]),
       bomb: [this.bomb.holder, +this.bomb.left.toFixed(2), +this.bomb.total.toFixed(2)],
       b: [+b.x.toFixed(2), +b.z.toFixed(2), +b.ry.toFixed(2), b.st, b.target, +b.t.toFixed(2)] });
+  }
+
+  // power-ups on the arena floor (banana level only)
+  updatePups() {
+    this.pupT -= TICK;
+    if (this.pupT <= 0 && this.pups.length < 3) {
+      this.pupT = rnd(4.5, 7.5);
+      const types = Object.keys(PUPS);
+      for (let tries = 0; tries < 12; tries++) {
+        const p = { x: rnd(-HX + 3, HX - 9), z: rnd(-HZ + 3, HZ - 3) };
+        const q = collide({ x: p.x, z: p.z }, 1.6);
+        if (Math.hypot(q.x - p.x, q.z - p.z) > 0.01) continue; // inside the hose
+        if (this.alive().some((a) => dist(a, p) < 5) || this.pups.some((o) => dist(o, p) < 8)) continue;
+        this.pups.push({ id: this.pupId++, x: +p.x.toFixed(1), z: +p.z.toFixed(1), type: types[Math.floor(Math.random() * types.length)] });
+        break;
+      }
+    }
+    for (const a of this.alive()) {
+      const i = this.pups.findIndex((o) => dist(o, a) < 1.5);
+      if (i < 0) continue;
+      const [pu] = this.pups.splice(i, 1);
+      const now = this.time, ev = { t: 'ev', e: 'pup', id: a.id, type: pu.type, x: pu.x, z: pu.z };
+      if (pu.type === 'speed') a.fast = now + PUPS.speed.dur;
+      else if (pu.type === 'shield') a.shield = now + PUPS.shield.dur;
+      else if (pu.type === 'freeze') { for (const o of this.alive()) if (o !== a) o.frozen = now + PUPS.freeze.dur; }
+      else if (pu.type === 'swap') {
+        const others = this.alive().filter((o) => o !== a);
+        const o = others[Math.floor(Math.random() * others.length)];
+        if (o) {
+          [a.x, o.x] = [o.x, a.x]; [a.z, o.z] = [o.z, a.z];
+          a.lock = o.lock = now + 0.4; // ignore stale position packets for a moment
+          Object.assign(ev, { with: o.id, ax: a.x, az: a.z, bx: o.x, bz: o.z });
+        }
+      }
+      this.broadcast(ev);
+    }
   }
 
   updateBomb() {
@@ -245,6 +291,7 @@ class Room {
       for (const p of this.alive()) {
         if (p === holder) continue;
         if (p.id === bm.from && held < NO_RETURN) continue; // no instant ping-pong
+        if (p.shield > this.time) continue;
         const d = dist(p, holder);
         if (d < bd) { bd = d; best = p; }
       }
@@ -304,17 +351,19 @@ class Room {
     const b = this.bamba;
     for (const p of this.players.values()) {
       if (!p.bot || !p.alive) continue;
-      let vx = 0, vz = 0, sp = SPEED * 0.93;
+      if (p.frozen > this.time) { p.m = 0; continue; }
+      let vx = 0, vz = 0, sp = SPEED * 0.93 * (p.fast > this.time ? 1.45 : 1);
       const ai = p.ai;
       if (holder === p) {
         let best = null, bd = 1e9;
         for (const o of this.alive()) { if (o === p) continue; const d = dist(o, p); if (d < bd) { bd = d; best = o; } }
         if (best) { vx = best.x - p.x; vz = best.z - p.z; }
-        sp = SPEED;
+        sp = SPEED * (p.fast > this.time ? 1.45 : 1);
       } else {
         ai.t -= TICK;
         if (ai.t <= 0) { ai.t = rnd(1, 3); ai.tx = rnd(-HX + 3, HX - 8); ai.tz = rnd(-HZ + 3, HZ - 3); }
         vx = (ai.tx - p.x) * 0.05; vz = (ai.tz - p.z) * 0.05;
+        for (const o of this.pups) { const d = dist(o, p); if (d < 11 && d > 0.1) { vx += ((o.x - p.x) / d) * 2.2; vz += ((o.z - p.z) / d) * 2.2; break; } }
         if (holder) { const d = dist(holder, p); if (d < 13) { vx += ((p.x - holder.x) / d) * (13 - d); vz += ((p.z - holder.z) / d) * (13 - d); } }
         const db = dist(b, p);
         if (db < 14 && b.st !== 'sit') { vx += ((p.x - b.x) / db) * (14 - db) * 1.5; vz += ((p.z - b.z) / db) * (14 - db) * 1.5; }
@@ -371,7 +420,7 @@ wss.on('connection', (ws) => {
             if (me.fin) break;
             me.x = Math.max(-40, Math.min(40, m.x)); me.z = Math.max(-190, Math.min(12, m.z));
             me.y = Number.isFinite(m.y) ? Math.max(-40, Math.min(40, m.y)) : 0;
-          } else { me.x = Math.max(-HX, Math.min(HX, m.x)); me.z = Math.max(-HZ, Math.min(HZ, m.z)); me.y = 0; }
+          } else if (me.lock > room.time || me.frozen > room.time) { /* swapped or frozen: keep the server position */ } else { me.x = Math.max(-HX, Math.min(HX, m.x)); me.z = Math.max(-HZ, Math.min(HZ, m.z)); me.y = 0; }
           me.ry = Number.isFinite(m.ry) ? m.ry : 0; me.m = m.m ? (m.m === 2 ? 2 : 1) : 0;
         }
         break;

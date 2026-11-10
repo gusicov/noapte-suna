@@ -29,6 +29,7 @@ Apoi deschide http://localhost:3000.
 - Banana trece la cel pe care îl atingi, dar trebuie ținută minim 0,2 s (și nu se întoarce imediat la cel care ți-a dat-o).
 - Bamba: aleargă 2 s la viteza jucătorilor, apoi cu 50% mai încet, iar după 10 s se pune în fund. Scapi dacă te îndepărtezi jumătate de hartă. Stă minim 5 s până pornește după următorul.
 - Nivelul 1 (banana): moare doar unul, de la banană sau de la Bamba.
+- Pe jos apar power-up-uri: ⚡ viteză, 🛡️ scut (nu poți primi banana), ❄️ îngheț (ceilalți stau pe loc), 🔀 schimb de loc.
 - Nivelul 2 (cursa): traseu cu obstacole; ultimul la finish e mâncat de Bamba, restul se califică.
 - Nivelurile alternează până rămâne un singur jucător, care câștigă meciul.
 

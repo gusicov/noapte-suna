@@ -78,9 +78,23 @@ export class Actor {
     this.tilt.add(this.model);
   }
 
+  setFx(flags) {
+    if (flags === this.fx) return;
+    this.fx = flags;
+    if (!this.bubble) {
+      this.bubble = new THREE.Mesh(new THREE.SphereGeometry(1.25, 20, 14), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.3, depthWrite: false }));
+      this.bubble.position.y = PLAYER_H * 0.5; this.bubble.scale.y = 1.15;
+      this.group.add(this.bubble);
+    }
+    this.bubble.visible = !!(flags & 3);
+    this.bubble.material.color.set(flags & 2 ? 0xbdf3ff : 0x4f9dff);
+    this.bubble.material.opacity = flags & 2 ? 0.55 : 0.3;
+    this.frozen = !!(flags & 2);
+  }
+
   place(x, z, yaw = 0) { this.group.position.set(x, 0, z); this.tx = x; this.tz = z; this.yaw = this.tyaw = yaw; }
 
-  revive() { this.alive = true; this.dying = null; this.group.visible = true; this.group.scale.setScalar(1); this.group.position.y = 0; this.tilt.rotation.set(0, 0, 0); }
+  revive() { this.setFx(0); this.alive = true; this.dying = null; this.group.visible = true; this.group.scale.setScalar(1); this.group.position.y = 0; this.tilt.rotation.set(0, 0, 0); }
 
   kill(kind, toward) {
     if (!this.alive) return;
@@ -109,7 +123,7 @@ export class Actor {
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
     this.yaw += dy * (1 - Math.exp(-14 * dt));
 
-    const mv = this.moving ? 1 : 0;
+    const mv = this.moving && !this.frozen ? 1 : 0;
     if (this.s > 0.5 && !mv) this.wob = 1;
     this.s += (mv - this.s) * (1 - Math.exp(-10 * dt));
     this.wob *= Math.exp(-2.2 * dt);

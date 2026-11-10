@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HX, HZ, SPEED, PLAYER_H, PR, CHARS, SPAWNS, collide, C, courseGround, pistonX, pistonVx, discAngle, ballPos } from './shared.js';
+import { HX, HZ, SPEED, PLAYER_H, PR, CHARS, SPAWNS, PUPS, collide, C, courseGround, pistonX, pistonVx, discAngle, ballPos } from './shared.js';
 import { buildCourse } from './course.js';
 import { SERVER, ROOM_FROM_URL } from './config.js';
 import { buildWorld } from './world.js';
@@ -43,7 +43,7 @@ let ws = null, myId = null, lobby = null, phase = 'menu';
 const actors = new Map();
 let demo = [];
 let bamba = null;
-const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashT: 0, dashCd: 0, dx: 0, dz: 1, air: 0, jumpQ: 0, cp: 0, hitCd: 0, fin: 0 };
+const me = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashT: 0, dashCd: 0, dx: 0, dz: 1, air: 0, jumpQ: 0, cp: 0, hitCd: 0, fin: 0, fast: 0, frozen: 0 };
 const bombS = { holder: null, left: 0, total: 1, tickT: 0, punch: 0 };
 let countdown = 0, lastCount = 0, bigTimer = 0, shake = 0, sendT = 0, time = 0, camAngle = 0.6;
 const menuB = { mode: 'sit', t: 2, gx: 0, gz: 0 };
@@ -87,6 +87,35 @@ const bomb = new THREE.Group(); // it's a banana. a big, ticking banana.
   bomb.userData = { body, light };
   bomb.visible = false;
   scene.add(bomb);
+}
+
+const pupMeshes = new Map();
+function pupSprite(type) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = PUPS[type].color; g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 8; g.strokeStyle = '#ffffff'; g.stroke();
+  g.font = '72px serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(PUPS[type].icon, 64, 70);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true }));
+  s.scale.set(1.7, 1.7, 1);
+  return s;
+}
+function syncPups(list) {
+  const seen = new Set();
+  for (const [id, x, z, type] of list || []) {
+    seen.add(id);
+    if (pupMeshes.has(id)) continue;
+    const g = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.25, 28), new THREE.MeshBasicMaterial({ color: PUPS[type]?.color || '#fff', transparent: true, opacity: 0.8, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 0.05;
+    const sp = pupSprite(PUPS[type] ? type : 'speed'); sp.position.y = 1.4;
+    g.add(ring, sp); g.position.set(x, 0, z); g.userData = { sp, ring, born: time };
+    scene.add(g); pupMeshes.set(id, g);
+  }
+  for (const [id, g] of pupMeshes) if (!seen.has(id)) { scene.remove(g); pupMeshes.delete(id); }
 }
 
 const blasts = [];
@@ -231,7 +260,7 @@ async function connect(first) {
     show(ui.lobby, false); show(ui.hud, false); show(ui.menu, true);
     ui.vignette.style.opacity = 0; ui.big.innerHTML = '';
     $('btn-create').disabled = $('btn-join').disabled = false;
-    setMode('banana');
+    setMode('banana'); syncPups([]);
     if (was) $('menu-msg').textContent = 'S-a pierdut conexiunea cu serverul. Intră din nou cu același cod.';
     else if (pendingErr) { $('menu-msg').textContent = pendingErr; pendingErr = ''; }
     else if ($('menu-msg').textContent === 'Se conectează…') $('menu-msg').textContent = 'Nu m-am putut conecta. Mai apasă o dată; dacă tot nu merge, oprește VPN/adblock sau încearcă alt browser.';
@@ -257,7 +286,7 @@ function syncActors() {
   });
 }
 
-let justJoined = false, pendingErr = '';
+let justJoined = false, pendingErr = '', lastY = null;
 function onMessage(m) {
   switch (m.t) {
     case 'err':
@@ -277,7 +306,7 @@ function onMessage(m) {
       lobby = m;
       syncActors();
       if (m.phase === 'lobby') {
-        phase = 'lobby'; bomb.visible = false; bombS.holder = null; setMode('banana');
+        phase = 'lobby'; bomb.visible = false; bombS.holder = null; setMode('banana'); syncPups([]);
         if (!wasLobby) { clearScorch(); ui.big.innerHTML = ''; setBanner(''); ui.vignette.style.opacity = 0; }
         show(ui.lobby, true); show(ui.hud, false);
         renderLobby();
@@ -292,7 +321,7 @@ function onMessage(m) {
     }
     case 'round': {
       phase = 'countdown'; countdown = 3; lastCount = 4;
-      setMode(m.mode); raceT = 0; clearScorch();
+      setMode(m.mode); raceT = 0; clearScorch(); lastY = null; syncPups([]);
       const race = mode === 'race';
       for (const a of actors.values()) { a.alive = false; a.dying = null; a.group.visible = false; a.fin = 0; a.ty = 0; }
       for (const [id, x, z] of m.spawns) {
@@ -300,7 +329,7 @@ function onMessage(m) {
         if (!a) continue;
         a.revive(); a.place(x, z, race ? Math.PI : Math.PI / 2);
         if (id === myId) {
-          Object.assign(me, { x, z, y: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashCd: 0, cp: 0, fin: 0, air: 0 });
+          Object.assign(me, { x, z, y: 0, vx: 0, vy: 0, vz: 0, kx: 0, kz: 0, dashCd: 0, cp: 0, fin: 0, air: 0, fast: 0, frozen: 0 });
           cam.yaw = race ? 0 : -Math.PI / 2; cam.pitch = 0.24;
         }
       }
@@ -314,12 +343,14 @@ function onMessage(m) {
       if (m.md !== mode && phase !== 'lobby' && phase !== 'menu') setMode(m.md);
       timeLeft = m.tl;
       if (Math.abs(m.rt - raceT) > 0.5) raceT = m.rt; else raceT += (m.rt - raceT) * 0.1;
-      for (const [id, x, z, ry, mv, alive, y, fin] of m.ps) {
+      syncPups(mode === 'race' ? [] : m.pu);
+      for (const [id, x, z, ry, mv, alive, y, fin, fl] of m.ps) {
         const a = actors.get(id);
         if (!a) continue;
         if (a.alive && !alive) { a.kill('eat', bamba.mouth()); renderScores(); }
         if (fin && a.fin !== fin) { a.fin = fin; renderScores(); }
-        if (id === myId && a.alive && phase === 'play') continue; // I own my position
+        a.setFx(fl || 0);
+        if (id === myId && a.alive && phase === 'play') continue; // I own my position (swap/freeze are applied from events)
         a.tx = x; a.tz = z; a.ty = y || 0; a.tyaw = ry; a.moving = mv;
       }
       [bombS.holder, bombS.left, bombS.total] = m.bomb;
@@ -364,6 +395,21 @@ function onEvent(m) {
       break;
     case 'escaped': feed('😮‍💨 Bamba și-a pierdut prada și s-a pus în fund', 'info'); break;
     case 'tired': feed('😴 Bamba a obosit și s-a pus în fund', 'info'); break;
+    case 'pup': {
+      const P = PUPS[m.type];
+      if (!P) break;
+      const who = `<b>${nameOf(m.id)}</b>`;
+      if (m.type === 'swap' && m.with != null) {
+        feed(`${P.icon} ${who} a făcut schimb de loc cu <b>${nameOf(m.with)}</b>`, 'info');
+        if (m.id === myId) { me.x = m.ax; me.z = m.az; me.vx = me.vz = 0; }
+        if (m.with === myId) { me.x = m.bx; me.z = m.bz; me.vx = me.vz = 0; big('🔀<small>Ai fost mutat!</small>', 1); }
+        for (const [id, x, z] of [[m.id, m.ax, m.az], [m.with, m.bx, m.bz]]) { const a = actors.get(id); if (a) { a.tx = x; a.tz = z; a.group.position.x = x; a.group.position.z = z; } }
+      } else feed(`${P.icon} ${who} ${P.text}`, 'info');
+      if (m.type === 'speed' && m.id === myId) me.fast = P.dur;
+      if (m.type === 'freeze' && m.id !== myId && iAmAlive()) { me.frozen = P.dur; me.vx = me.vz = 0; big('❄️<small>Ești înghețat!</small>', P.dur); }
+      if (m.id === myId) sfx.go(); else sfx.count();
+      break;
+    }
     case 'fin': {
       const a = actors.get(m.id);
       if (a) a.fin = m.place;
@@ -374,6 +420,7 @@ function onEvent(m) {
     }
     case 'last': {
       const a = actors.get(m.id);
+      if (a) lastY = Math.max(0, a.group.position.y);
       setTimeout(() => { a?.kill('eat', bamba.mouth()); bamba.chomp = 1; sfx.chomp(); shake = Math.max(shake, 0.7); renderScores(); }, 350);
       const v = `<b>${nameOf(m.id)}</b>`;
       feed(pick([`🐌 ${v} a ajuns ultimul și l-a mâncat Bamba`, `🐌 ${v} a fost prea lent. Bamba a rezolvat.`, `🦦 Bamba l-a halit pe ${v}, ultimul din cursă`]), 'eat');
@@ -404,7 +451,7 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 
 function dash() {
-  if (phase !== 'play' || !iAmAlive() || me.dashCd > 0) return;
+  if (phase !== 'play' || !iAmAlive() || me.dashCd > 0 || me.frozen > 0) return;
   me.dashT = 0.18; me.dashCd = 2.5; sfx.dash();
 }
 
@@ -484,6 +531,8 @@ $('code').addEventListener('input', () => { if ($('btn-join').classList.contains
 
 // --------------------------------------------------------------------- loop --
 function moveMe(dt, a) {
+  me.fast = Math.max(0, me.fast - dt); me.frozen = Math.max(0, me.frozen - dt);
+  if (me.frozen > 0 && mode !== 'race') { me.vx = me.vz = 0; me.dashT = 0; a.moving = 0; return; }
   let ix = 0, iz = 0;
   if (keys.has('KeyW') || keys.has('ArrowUp')) iz -= 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) iz += 1;
@@ -493,7 +542,7 @@ function moveMe(dt, a) {
   { const c = Math.cos(cam.yaw), sn = Math.sin(cam.yaw), rx = c * ix + sn * iz, rz = -sn * ix + c * iz; ix = rx; iz = rz; }
   const il = Math.hypot(ix, iz);
   const h = HANDLING[a.char] || HANDLING.gluga;
-  let sp = SPEED * (bombS.holder === myId ? 1.06 : 1);
+  let sp = SPEED * (bombS.holder === myId ? 1.06 : 1) * (me.fast > 0 ? 1.45 : 1);
   if (h.hop) sp *= 0.62 + 0.6 * a.hop;
   if (il > 0.15) { ix /= Math.max(il, 1); iz /= Math.max(il, 1); me.dx = ix / Math.hypot(ix, iz); me.dz = iz / Math.hypot(ix, iz); }
   else { ix = iz = 0; }
@@ -587,7 +636,13 @@ function frame(now) {
 
   if (!inGame) menuBamba(dt);
   if (mode === 'race') { if (phase === 'play') raceT += dt; course.update(raceT); }
-  bamba.baseY = mode === 'race' ? C.finishY : 0;
+  for (const g of pupMeshes.values()) {
+    const u = time - g.userData.born;
+    g.userData.sp.position.y = 1.4 + Math.sin(u * 3) * 0.25;
+    g.userData.ring.rotation.z = u * 2;
+    g.scale.setScalar(Math.min(1, u * 4));
+  }
+  bamba.baseY = mode === 'race' ? (lastY ?? C.finishY) : 0;
   bamba.update(dt, time);
 
   const mine = myActor();
@@ -602,7 +657,7 @@ function frame(now) {
       a.group.position.y += ((a.ty || 0) - a.group.position.y) * k;
     }
     a.update(dt, time, inGame && bombS.holder === id);
-    a.label.visible = camera.position.distanceToSquared(a.group.position) > 49;
+    a.label.visible = id !== myId && camera.position.distanceToSquared(a.group.position) > 49;
   }
   for (const a of demo) a.update(dt, time, false);
 
@@ -705,4 +760,4 @@ loadModels((p) => (ui.loading.textContent = `Se încarcă… ${Math.round(p * 10
 }).catch((e) => { ui.loading.textContent = 'Nu s-au putut încărca modelele: ' + e.message; });
 
 // handy for debugging from the console
-window.__ns = { cam, get mode() { return mode; }, get raceT() { return raceT; }, get phase() { return phase; }, actors, me, get bamba() { return bamba; }, bombS, keys };
+window.__ns = { cam, pupMeshes, get mode() { return mode; }, get raceT() { return raceT; }, get phase() { return phase; }, actors, me, get bamba() { return bamba; }, bombS, keys };

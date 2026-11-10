@@ -73,6 +73,13 @@ export function collide(p, radius = PR) {
   return p;
 }
 
+export const PUPS = {
+  speed:  { icon: '⚡', name: 'Viteză',  color: '#ffd92e', dur: 4,   text: 'aleargă cu 45% mai repede' },
+  shield: { icon: '🛡️', name: 'Scut',    color: '#6fb1ff', dur: 5,   text: 'nu poate primi banana' },
+  freeze: { icon: '❄️', name: 'Îngheț',  color: '#9be8ff', dur: 1.6, text: 'i-a înghețat pe toți ceilalți' },
+  swap:   { icon: '🔀', name: 'Schimb',  color: '#c9a2ff', dur: 0,   text: 'a făcut schimb de loc' },
+};
+
 export const SPAWNS = [
   { x: -25, z: -14 }, { x: -9, z: -16 }, { x: -26, z: 2 }, { x: -6, z: 16 },
 ];
