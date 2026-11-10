@@ -213,6 +213,7 @@ async function connect(first) {
     $('btn-create').disabled = $('btn-join').disabled = false;
     setMode('banana');
     if (was) $('menu-msg').textContent = 'S-a pierdut conexiunea cu serverul. Intră din nou cu același cod.';
+    else if (pendingErr) { $('menu-msg').textContent = pendingErr; pendingErr = ''; }
     else if ($('menu-msg').textContent === 'Se conectează…') $('menu-msg').textContent = 'Nu m-am putut conecta. Mai apasă o dată; dacă tot nu merge, oprește VPN/adblock sau încearcă alt browser.';
     for (const a of demo) a.dispose();
     makeDemo();
@@ -236,11 +237,13 @@ function syncActors() {
   });
 }
 
-let justJoined = false;
+let justJoined = false, pendingErr = '';
 function onMessage(m) {
   switch (m.t) {
     case 'err':
-      $('menu-msg').textContent = m.msg; ws?.close(); break;
+      pendingErr = m.msg; ws?.close();
+      if (m.gone) { history.replaceState(null, '', location.pathname); $('code').value = ''; inviteMode(false); }
+      break;
     case 'joined':
       myId = m.id;
       for (const a of demo) a.dispose();
@@ -443,11 +446,21 @@ $('btn-start').addEventListener('click', () => { startMusic(); send({ t: 'start'
 $('btn-addbot').addEventListener('click', () => send({ t: 'addbot' }));
 $('btn-rmbot').addEventListener('click', () => send({ t: 'rmbot' }));
 $('btn-link').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(location.href); $('btn-link').textContent = 'Copiat ✓'; } catch { $('btn-link').textContent = location.href; }
+  try { await navigator.clipboard.writeText(/^(localhost|127\.)/.test(location.hostname) ? 'https://gusicov.github.io/noapte-suna/?room=' + lobby.code : location.href); $('btn-link').textContent = 'Copiat ✓'; } catch { $('btn-link').textContent = location.href; }
   setTimeout(() => ($('btn-link').textContent = 'Copiază linkul'), 1800);
 });
 $('name').value = localStorage.getItem('ns_name') || '';
 $('code').value = ROOM_FROM_URL;
+function inviteMode(on) {
+  const j = $('btn-join'), c = $('btn-create'), panel = c.parentElement, row = j.parentElement, or = panel.querySelector('.or');
+  j.classList.toggle('primary', on); c.classList.toggle('primary', !on);
+  j.textContent = on ? 'Intră în camera ' + $('code').value.toUpperCase() : 'Intră';
+  c.textContent = on ? 'Creează altă cameră' : 'Creează cameră';
+  or.textContent = on ? 'sau' : 'sau intră la un prieten';
+  if (on) { panel.insertBefore(row, c); panel.insertBefore(or, c); } else { panel.insertBefore(c, or); panel.insertBefore(or, row); }
+}
+if (ROOM_FROM_URL.length === 4) inviteMode(true);
+$('code').addEventListener('input', () => { if ($('btn-join').classList.contains('primary')) $('btn-join').textContent = 'Intră în camera ' + $('code').value.toUpperCase(); });
 
 // --------------------------------------------------------------------- loop --
 function moveMe(dt, a) {

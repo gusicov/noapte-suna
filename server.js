@@ -349,7 +349,7 @@ wss.on('connection', (ws) => {
         rooms.set(room.code, room);
       } else {
         const r = rooms.get(String(m.code || '').toUpperCase().trim());
-        if (!r) return ws.send(JSON.stringify({ t: 'err', msg: 'Nu există camera asta. Verifică codul.' }));
+        if (!r) return ws.send(JSON.stringify({ t: 'err', gone: true, msg: 'Camera asta nu mai există (gazda a ieșit sau serverul a repornit). Cere un link nou sau creează tu una.' }));
         if (r.players.size >= MAX_PLAYERS) {
           const bot = [...r.players.values()].find((p) => p.bot && !p.alive);
           if (!bot) return ws.send(JSON.stringify({ t: 'err', msg: 'Camera e plină (maxim 4).' }));
