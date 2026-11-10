@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Noapte Sună 🍌</title>
+<meta name="description" content="Hot potato cu o banană explozivă, în 3D, pentru 4 prieteni. Ai grijă la Bamba.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍌</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@800&family=Nunito:wght@600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="vignette"></div>
+<div id="flash"></div>
+
+<!-- MENU -->
+<section id="menu" class="screen">
+  <div class="title-wrap">
+    <h1 class="title">Noapte<br><span>Sună</span> <i>🍌</i></h1>
+    <p class="subtitle">Pasează banana. Nu-l trezi pe <b>Bamba</b>.</p>
+  </div>
+  <div class="panel menu-panel">
+    <label class="field">
+      <span>Cum te cheamă?</span>
+      <input id="name" maxlength="14" placeholder="Numele tău" autocomplete="off">
+    </label>
+    <button id="btn-create" class="btn big primary">Creează cameră</button>
+    <div class="or">sau intră la un prieten</div>
+    <div class="join-row">
+      <input id="code" maxlength="4" placeholder="COD" autocomplete="off">
+      <button id="btn-join" class="btn big">Intră</button>
+    </div>
+    <p id="menu-msg" class="msg"></p>
+    <p id="server-status" class="status">Se verifică serverul…</p>
+  </div>
+</section>
+
+<!-- LOBBY -->
+<section id="lobby" class="screen hidden">
+  <div class="panel lobby-panel">
+    <div class="lobby-head">
+      <div>
+        <div class="tiny">Codul camerei</div>
+        <div id="lobby-code" class="code">----</div>
+      </div>
+      <button id="btn-link" class="btn">Copiază linkul</button>
+    </div>
+    <div class="tiny">Alege-ți personajul</div>
+    <div id="chars" class="chars"></div>
+    <p id="char-tag" class="char-tag"></p>
+    <div class="tiny">Jucători <span id="count"></span></div>
+    <ul id="lobby-players" class="lobby-players"></ul>
+    <div class="lobby-actions">
+      <div id="host-tools" class="host-tools">
+        <button id="btn-addbot" class="btn small">+ Bot</button>
+        <button id="btn-rmbot" class="btn small">− Bot</button>
+      </div>
+      <button id="btn-start" class="btn big primary">Start!</button>
+    </div>
+    <p id="lobby-msg" class="msg"></p>
+    <p class="help">Mișcare: <b>WASD</b> · Cameră: <b>mouse</b> (click pe joc) · Sprint: <b>Space</b> · Telefon: joystick stânga, cameră dreapta</p>
+  </div>
+</section>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <ul id="scores" class="scores"></ul>
+  <div id="banner" class="banner"></div>
+  <div id="big" class="big-text"></div>
+  <div id="dash" class="dash"><i></i><span>SPRINT</span></div>
+  <div id="stick" class="stick hidden"><i></i></div>
+  <button id="btn-dash" class="touch-dash hidden">💨</button>
+</div>
+<ul id="feed" class="feed"></ul>
+<div id="hint" class="hint hidden">🖱️ Click pe joc ca să miști camera cu mouse-ul · Esc ca să eliberezi · rotiță = zoom (până la față)</div>
+
+<div class="audio">
+  <button id="btn-mute" title="Sunet">🔊</button>
+  <input id="vol" type="range" min="0" max="100" value="45" title="Volum muzică">
+</div>
+
+<div id="loading" class="loading">Se încarcă…</div>
+<audio id="music" src="assets/music.mp3" loop preload="auto"></audio>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

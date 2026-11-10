@@ -1,0 +1,16 @@
+{
+  "name": "noapte-suna",
+  "version": "1.0.0",
+  "description": "Noapte Sună – hot potato cu o banană explozivă, în 3D, pentru 4 prieteni. Și cu Bamba.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
