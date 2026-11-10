@@ -196,12 +196,32 @@ async function connect(first) {
   localStorage.setItem('ns_name', name);
   $('menu-msg').textContent = 'Se conectează…';
   $('btn-create').disabled = $('btn-join').disabled = true;
-  const ok = await wake();
-  if (!ok) { $('menu-msg').textContent = 'Nu pot ajunge la server.'; $('btn-create').disabled = $('btn-join').disabled = false; return; }
-  ws = new WebSocket(SERVER.replace(/^http/, 'ws'));
-  const sock = ws;
-  const giveUp = setTimeout(() => { if (sock.readyState !== 1) sock.close(); }, 15000);
-  ws.onopen = () => { clearTimeout(giveUp); send({ ...first, name, char: myChar }); };
+  // Open the socket directly and keep retrying: it doesn't depend on the /health
+  // check (which some ad-blockers / antivirus web shields block).
+  let sock = null;
+  const t0 = Date.now();
+  for (let i = 0; i < 22 && !sock; i++) {
+    sock = await new Promise((res) => {
+      let done = false;
+      const w = new WebSocket(SERVER.replace(/^http/, 'ws'));
+      const fin = (v) => { if (!done) { done = true; clearTimeout(to); res(v); } };
+      const to = setTimeout(() => { try { w.close(); } catch { /* */ } fin(null); }, 9000);
+      w.onopen = () => fin(w);
+      w.onerror = w.onclose = () => fin(null);
+    });
+    if (!sock) {
+      $('menu-msg').textContent = `Serverul se trezește… (${Math.round((Date.now() - t0) / 1000)}s)`;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+  if (!sock) {
+    $('menu-msg').innerHTML = 'Nu pot ajunge la server. Deschide <a href="' + SERVER + '/health" target="_blank" style="color:#5ee6b0">acest link</a>: dacă nu se încarcă, antivirusul, adblock-ul sau DNS-ul tău blochează serverul.';
+    $('btn-create').disabled = $('btn-join').disabled = false;
+    return;
+  }
+  $('menu-msg').textContent = 'Se conectează…';
+  ws = sock;
+  send({ ...first, name, char: myChar });
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
   ws.onclose = () => {
     const was = myId != null;
