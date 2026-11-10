@@ -366,12 +366,18 @@ if (touch) {
 
 // desktop: click the game to grab the mouse (GTA-style look), Esc to release
 const inGameNow = () => phase === 'countdown' || phase === 'play' || phase === 'pause' || phase === 'end';
+let rmb = false, usedLook = false;
 if (!touch) {
-  $('game').addEventListener('click', () => { if (inGameNow() && document.pointerLockElement !== $('game')) $('game').requestPointerLock?.()?.catch?.(() => {}); });
-  let dragging = false;
-  $('game').addEventListener('mousedown', () => (dragging = true));
-  addEventListener('mouseup', () => (dragging = false));
-  addEventListener('mousemove', (e) => { if (document.pointerLockElement === $('game') || (dragging && inGameNow())) look(e.movementX, e.movementY); });
+  // hold the RIGHT mouse button and move to turn the camera
+  addEventListener('contextmenu', (e) => e.preventDefault());
+  addEventListener('mousedown', (e) => {
+    if (e.button !== 2 || !inGameNow()) return;
+    rmb = true; usedLook = true;
+    $('game').requestPointerLock?.()?.catch?.(() => {}); // keeps the cursor from hitting the screen edge
+  });
+  addEventListener('mouseup', (e) => { if (e.button === 2) { rmb = false; if (document.pointerLockElement) document.exitPointerLock(); } });
+  addEventListener('blur', () => { rmb = false; });
+  addEventListener('mousemove', (e) => { if (rmb) look(e.movementX, e.movementY); });
 }
 addEventListener('wheel', (e) => { cam.dist = Math.min(16, Math.max(1.3, cam.dist * (e.deltaY > 0 ? 1.12 : 0.89))); }, { passive: true });
 
@@ -524,12 +530,12 @@ function frame(now) {
     if (follow) { fx = follow.group.position.x; fz = follow.group.position.z; }
     else if (phase === 'play') { fx = bamba.x; fz = bamba.z; }
     const spect = !mine?.alive;
-    if (spect && phase === 'play' && document.pointerLockElement !== $('game') && cam.lookId == null) cam.yaw += dt * 0.15;
+    if (spect && phase === 'play' && !rmb && cam.lookId == null) cam.yaw += dt * 0.15;
     tmp.set(fx, PLAYER_H * 0.86, fz);
     camLook.lerp(tmp, 1 - Math.exp(-(spect ? 4 : 18) * dt));
     const D = cam.dist * (spect ? 1.8 : 1) * (camera.aspect < 1 ? 1.25 : 1), cp = Math.cos(cam.pitch);
     camPos.set(camLook.x + Math.sin(cam.yaw) * cp * D, Math.max(0.25, camLook.y + Math.sin(cam.pitch) * D), camLook.z + Math.cos(cam.yaw) * cp * D);
-    show($('hint'), !touch && document.pointerLockElement !== $('game'));
+    show($('hint'), !touch && !usedLook);
   } else {
     camAngle += dt * 0.09;
     tmp.set(Math.sin(camAngle) * 50, 21, Math.cos(camAngle) * 44);

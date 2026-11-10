@@ -3,7 +3,7 @@
 Hot potato în 3D pentru până la 4 prieteni, direct în browser. Pasezi o banană care ticăie; cine o ține când explodează, pierde. Pe margine stă **Bamba**, un dihor uriaș: dacă te apropii, te aleargă și te mănâncă.
 
 - **Joacă:** https://gusicov.github.io/noapte-suna/
-- Mișcare `WASD`, cameră cu mouse-ul (click pe joc), sprint `Space`, zoom cu rotița.
+- Mișcare `WASD`, cameră cu click dreapta ținut + mouse, sprint `Space`, zoom cu rotița.
 - Pe telefon: joystick în stânga, cameră în dreapta.
 
 ## Cum e construit
